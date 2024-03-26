@@ -5,11 +5,15 @@ import random
 
 # parameters
 num_targets = 3
-serial_port = '/dev/cu.usbmodem143101'  # Change this to match the port where your Arduino is connected
-baud_rate = 9600  # Adjust baud rate as needed
+serial_port = '/dev/cu.usbmodem143301'  # Change this to match the port where your Arduino is connected
+baud_rate = 250000  # Adjust baud rate as needed
 scanTime = 20  # seconds
 scanData = []
 threshold = 10
+encoder = {0 : b"\x30",
+           1 : b"\x31",
+           2 : b"\x32"
+           }
 
 # dataframe for game data
 game_data = pd.DataFrame(columns=['round',
@@ -38,7 +42,7 @@ def scan(round):
     ser = serial.Serial(serial_port, baud_rate, timeout=0.01)
 
     while scan_on:
-        ser.write(b'REQUEST\n')  # Send request command
+        ser.write(b'r\n')  # Send request command
         response = ser.readline().decode().strip()
         if response:
             t = time.time() - start_time
@@ -77,7 +81,17 @@ def scan(round):
     return df, struck_panel
 
 
+def flash_single(ser, panel):
+    cmd = encoder[panel]
+    ser.write(cmd)
+    ser.readline()
+    time.sleep(0.1)  # Wait for a while
+    ser.write(b'o\n')
+    time.sleep(0.1)  # Wait for a while
+    ser.readline()
+
 # game setup
+ser = serial.Serial(serial_port, baud_rate, timeout=2, writeTimeout=2)
 game_on = False
 round = 0
 user_input = input("Press any key and return to play...")
@@ -92,6 +106,9 @@ while game_on:
     # Generate a random number between 0 and 2
     selected_target = random.randint(0, num_targets - 1)
     print("Strike panel {}!".format(selected_target))
+
+    #Flash LED on selected target
+    flash_single(ser, selected_target)
 
     # Scan sensor elements on targets for strike
     round_data, struck_panel = scan(round)
