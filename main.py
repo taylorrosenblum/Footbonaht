@@ -1,85 +1,39 @@
+import pygame
+import sys
 import serial
 import time
-import pandas as pd
 import random
 
-# parameters
-num_targets = 3
+# set up hardware
 serial_port = '/dev/cu.usbmodem143301'  # Change this to match the port where your Arduino is connected
-baud_rate = 250000  # Adjust baud rate as needed
-scanTime = 20  # seconds
-scanData = []
-threshold = 10
-encoder = {0 : b"\x30",
-           1 : b"\x31",
-           2 : b"\x32"
+encoder = {0: b"\x30",  # an attempt to increase serial communication speeds
+           1: b"\x31",
+           2: b"\x32"
            }
 
-# dataframe for game data
-game_data = pd.DataFrame(columns=['round',
-                                  'elapsed',
-                                  'ch0',
-                                  'ch1',
-                                  'ch2']
-                         )
+# game parameters
+rounds = 10
+num_targets = 3
+baud_rate = 250000  # Adjust baud rate as needed
+scanTime = 20  # seconds
+threshold = 10
 
-def scan(round):
-    # Gather data and return result of a single round
-    #   Continuously request current reading of all piezo elements from Arduino
-    #   If any reading exceeds threshold before scan time has elapsed, stop scanning
-    #   and return ID of panel where strike was detected
-    #   If no strike was detected pass a "-1" for struck panel
-    #   Gather round data for testing purposes and return as pandas dataframe
+# Initialize Pygame
+pygame.init()
+clock = pygame.time.Clock()
+screen_width = 2000
+screen_height = 1000
+screen = pygame.display.set_mode((screen_width, screen_height))
+pygame.display.set_caption("Footbonaht")
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+font = pygame.font.Font(None, 72)
 
-    round_count = []
-    readings = []
-    elapsed = []
-    start_time = time.time()
-    scan_on = True
-    struck_panel = -1
-
-    # Initialize serial port
-    ser = serial.Serial(serial_port, baud_rate, timeout=0.01)
-
-    while scan_on:
-        ser.write(b'r\n')  # Send request command
-        response = ser.readline().decode().strip()
-        if response:
-            t = time.time() - start_time
-            values = [int(x) for x in response.split(',')]
-            elapsed.append(t)
-            readings.append(values)
-            round_count.append(round)
-            print("Elapsed Time: {:.2f} | "
-                  "Ch0: {:.2f} | "
-                  "Ch1: {:.2f} | "
-                  "Ch2: {:.2f}".format(t, values[0], values[1], values[2]),
-                  end='\r')
-            if max(values) > threshold:
-                scan_on = False
-                struck_panel = values.index(max(values))
-            if time.time() - start_time > scanTime:
-                scan_on = False
-                struck_panel = -1
-    ser.close()  # Close serial port
-
-    # slice data in to individual channels
-    ch0 = []
-    ch1 = []
-    ch2 = []
-    for row in readings:
-        row = list(row)
-        ch0.append(int(row[0]))
-        ch1.append(int(row[1]))
-        ch2.append(int(row[2]))
-    # Process data as needed
-    df = pd.DataFrame({'round': round_count,
-                       'elapsed': elapsed,
-                       'ch0': ch0,
-                       'ch1': ch1,
-                       'ch2': ch2})
-    return df, struck_panel
-
+# Pygame start button
+button_surface = pygame.Surface((300, 100)) # Create a surface for the button
+text = font.render("START", True, (0, 0, 0)) # Render text on the button
+text_rect = text.get_rect(center=(button_surface.get_width() / 2, button_surface.get_height() / 2))
+button_rect = pygame.Rect(125, 125, 150, 50)
 
 def flash_single(ser, panel):
     cmd = encoder[panel]
@@ -90,39 +44,139 @@ def flash_single(ser, panel):
     time.sleep(0.1)  # Wait for a while
     ser.readline()
 
-# game setup
-ser = serial.Serial(serial_port, baud_rate, timeout=2, writeTimeout=2)
-game_on = False
-round = 0
-user_input = input("Press any key and return to play...")
+def update_scoreboard(round, score, t):
+    screen.fill(WHITE)
 
-# allow user to initialize game
-if user_input:
-    game_on = True
+    round_text = font.render(f"Round: {round}", True, BLACK)
+    round_rect = round_text.get_rect(center=(screen_width // 2, screen_height * 0.25))
+    screen.blit(round_text, round_rect)
 
-# main game loop
-while game_on:
+    score_text = font.render(f"Score: {score}", True, BLACK)
+    score_rect = score_text.get_rect(center=(screen_width // 2, screen_height * 0.5))
+    screen.blit(score_text, score_rect)
 
-    # Generate a random number between 0 and 2
-    selected_target = random.randint(0, num_targets - 1)
-    print("Strike panel {}!".format(selected_target))
+    react_text = font.render(f"Reaction Time: {t:.2f} seconds", True, BLACK)
+    react_rect = score_text.get_rect(center=(screen_width // 2, screen_height * 0.75))
+    screen.blit(react_text, react_rect)
 
-    #Flash LED on selected target
-    flash_single(ser, selected_target)
+    pygame.display.flip()
 
-    # Scan sensor elements on targets for strike
-    round_data, struck_panel = scan(round)
-    game_data = pd.concat([game_data, round_data], ignore_index=True)
-    game_data.to_csv('game_data.csv')
+def final_scoreboard(score, rounds, react_times):
 
-    if struck_panel == -1:  # no strike registered
-        print("\nNo strike detected!")
-        game_on = False
-    else:  # strike detected
-        print("\nPanel {} was struck!".format(struck_panel))
-        if struck_panel == selected_target:
-            print("Target hit!")
+    screen.fill(WHITE)
+    go_text = font.render(f"Game over!", True, BLACK)
+    go_rect = go_text.get_rect(center=(screen_width // 2, screen_height * 0.25))
+    screen.blit(go_text, go_rect)
+    pygame.display.flip()
+    time.sleep(2)
+
+    screen.fill(WHITE)
+    acc = (score / rounds) * 100
+    acc_text = font.render(f"Final Score: {score} / {rounds} ({acc:.2f}%)", True, BLACK)
+    acc_rect = acc_text.get_rect(center=(screen_width // 2, screen_height * 0.25))
+    screen.blit(acc_text, acc_rect)
+    avg_react_time = sum(react_times) / len(react_times)
+    summ_text = font.render(f"Average Reaction Time: {avg_react_time:.2f} s", True, BLACK)
+    summ_rect = summ_text.get_rect(center=(screen_width // 2, screen_height * 0.50))
+    screen.blit(summ_text, summ_rect)
+    pygame.display.flip()
+
+def main():
+    reset = True
+    running = True
+    ser = serial.Serial(serial_port, baud_rate, timeout=2, writeTimeout=2)
+    ser.readline()
+
+    # Main game loop
+    while running:
+        if reset:
+            score = 0
+            t = 0
+            round = 1
+            react_times = []
+            running = True
+            game_on = False
+            reset = False
+
+        # Clear the screen
+        screen.fill(WHITE)
+
+        # Get events from the event queue
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            # Check for the mouse button down event
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                # Call the on_mouse_button_down() function
+                if button_rect.collidepoint(event.pos):
+                    game_on = True
+                    reset = True
+
+        # button stuff
+        button_surface.blit(text, text_rect) # Show the button text
+        screen.blit(button_surface, (button_rect.x, button_rect.y)) # Draw the button on the screen
+
+        # Check if the mouse is over the button. This will create the button hover effect
+        if button_rect.collidepoint(pygame.mouse.get_pos()):
+            pygame.draw.rect(button_surface, (127, 255, 212), (1, 1, 298, 98))
         else:
-            print("Target Missed!")
+            pygame.draw.rect(button_surface, (0, 0, 0), (0, 0, 298, 98))
+            pygame.draw.rect(button_surface, (255, 255, 255), (1, 1, 298, 98))
+            pygame.draw.rect(button_surface, (0, 0, 0), (1, 1, 298, 1), 2)
+            pygame.draw.rect(button_surface, (0, 98, 0), (1, 98, 298, 10), 2)
 
-    round += 1
+        while game_on:
+            # Draw the scoreboard
+            update_scoreboard(round, score, t)
+            # Generate a random number between 0 and 2
+            selected_target = random.randint(0, num_targets - 1)
+            print("Strike panel {}!".format(selected_target))
+
+            # Flash LED on selected target
+            flash_single(ser, selected_target)
+
+            # Begin scanning panel for ball strike
+            scanning = True
+            start_time = time.time()
+            struck_panel = -1
+            while scanning:
+                ser.write(b'r\n')  # Send request command
+                response = ser.readline().decode().strip()
+                if response:
+                    t = time.time() - start_time
+                    react_times.append(t)
+                    values = [int(x) for x in response.split(',')]
+                    if max(values) > threshold:
+                        scanning = False
+                        struck_panel = values.index(max(values))
+                    if time.time() - start_time > scanTime:
+                        scanning = False
+                        struck_panel = -1
+
+            if struck_panel == -1:  # no strike registered
+                print("\nNo strike detected!")
+            else:  # strike detected
+                print("\nPanel {} was struck!".format(struck_panel))
+                if struck_panel == selected_target:
+                    print("Target hit!")
+                    score += 1
+                else:
+                    print("Target Missed!")
+
+            if round >= rounds:
+                game_on = False
+                final_scoreboard(score, rounds, react_times)
+                time.sleep(10)
+
+            # index round number
+            round += 1
+
+        # update screen while game is running
+        pygame.display.flip()
+
+    pygame.quit()
+    sys.exit()
+
+
+if __name__ == "__main__":
+    main()
